@@ -1,14 +1,25 @@
 'use strict';
-const KEY='gymtracker.v1'; const ORIGINAL=JSON.parse(JSON.stringify(PROGRAM)); const allEx=Object.values(PROGRAM).flatMap(x=>x.ex);const byId=Object.fromEntries(allEx.map(e=>[e.id,e]));const main=document.getElementById('main');
+const KEY='gymtracker.v1',DEFAULT_GROUP='g-default',WORKOUT_DAYS=['A','B','C']; const ORIGINAL=JSON.parse(JSON.stringify(PROGRAM)); const allEx=Object.values(PROGRAM).flatMap(x=>x.ex);const byId=Object.fromEntries(allEx.map(e=>[e.id,e]));const main=document.getElementById('main');
 const today=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`};
 const fresh=()=>({version:1,drafts:{},history:[],mobility:{},timer:null,autoTimer:false,plans:{}});let state=fresh();let warning='';try{const raw=localStorage.getItem(KEY);if(raw){const x=JSON.parse(raw);if(!valid(x))throw Error('Неверный формат');state=x}}catch(e){warning='Не удалось прочитать локальные данные. Проверь настройки браузера или восстанови резервную копию.'}
 if(typeof state.autoTimer!=='boolean'){state.autoTimer=false;state.timer=null;}state.plans??={};state.custom??={};
-function valid(x){return x&&x.version===1&&x.drafts&&typeof x.drafts==='object'&&!Array.isArray(x.drafts)&&Array.isArray(x.history)&&x.mobility&&typeof x.mobility==='object'&&x.history.every(s=>validSession(s)&&typeof s.id==='string'&&/^[a-z0-9-]+$/.test(s.id))&&Object.entries(x.drafts).every(([k,v])=>PROGRAM[k]&&validSession(v))}
-function validSession(s){return s&&PROGRAM[s.day]&&typeof s.date==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(s.date)&&s.entries&&ORIGINAL[s.day].ex.every(e=>Array.isArray(s.entries[e.id])&&s.entries[e.id].length>=1&&s.entries[e.id].every(a=>a&&typeof a.done==='boolean'))&&Array.isArray(s.cool)}
+function validExercise(e){return e&&typeof e.id==='string'&&/^[A-Za-z0-9:-]+$/.test(e.id)&&typeof e.name==='string'&&typeof e.plan==='string'&&Number.isInteger(e.sets)&&e.sets>=1&&e.sets<=12&&Number.isFinite(e.rest)&&typeof e.weight==='boolean'}
+function validProgram(p){return p&&WORKOUT_DAYS.every(k=>p[k]&&typeof p[k].day==='string'&&Array.isArray(p[k].ex)&&p[k].ex.every(validExercise)&&new Set(p[k].ex.map(e=>e.id)).size===p[k].ex.length&&Array.isArray(p[k].cool)&&p[k].cool.every(x=>Array.isArray(x)&&x.length>=2&&typeof x[0]==='string'&&typeof x[1]==='string'))}
+function validSession(s){
+ if(!s||!WORKOUT_DAYS.includes(s.day)||!validDate(s.date)||!s.entries||typeof s.entries!=='object'||!Array.isArray(s.cool))return false;
+ const ex=s.exerciseSnapshot||ORIGINAL[s.day].ex;
+ return Array.isArray(ex)&&ex.every(e=>e&&typeof e.id==='string'&&/^[A-Za-z0-9:-]+$/.test(e.id)&&Array.isArray(s.entries[e.id])&&s.entries[e.id].length>=1&&s.entries[e.id].every(a=>a&&typeof a.done==='boolean'))&&(!s.groupId||typeof s.groupId==='string');
+}
+function valid(x){
+ if(!x||x.version!==1||!x.drafts||typeof x.drafts!=='object'||Array.isArray(x.drafts)||!Array.isArray(x.history)||!x.mobility||typeof x.mobility!=='object'||!x.history.every(s=>validSession(s)&&typeof s.id==='string'&&/^[a-z0-9-]+$/.test(s.id))||!Object.entries(x.drafts).every(([k,v])=>WORKOUT_DAYS.includes(k)&&validSession(v)))return false;
+ if(x.groups!==undefined&&(!Array.isArray(x.groups)||!x.groups.length||new Set(x.groups.map(g=>g?.id)).size!==x.groups.length||!x.groups.every(g=>g&&typeof g.id==='string'&&/^g-[a-z0-9-]+$/.test(g.id)&&typeof g.name==='string'&&(g.id===DEFAULT_GROUP&&!g.program||validProgram(g.program))&&(!g.schedule||typeof g.schedule==='object'))))return false;
+ if(x.groupDrafts!==undefined&&(!x.groupDrafts||typeof x.groupDrafts!=='object'||Array.isArray(x.groupDrafts)||!Object.entries(x.groupDrafts).every(([k,d])=>validSession(d)&&k===slotKey(sessionGroup(d),d.date,d.day))))return false;
+ return true;
+}
 function save(){try{localStorage.setItem(KEY,JSON.stringify(state));warning=''}catch(e){warning='Данные не удалось сохранить на устройстве. Не закрывай приложение до экспорта резервной копии.'}document.getElementById('storageWarning').textContent=warning}
 const weightNum=v=>/^\d+(?:[.,]\d+)?$/.test(String(v).trim())?Number(String(v).trim().replace(',','.')):NaN;
 const esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); const fmt=d=>d.split('-').reverse().join('.');
-let tab='train',day=({1:'A',3:'B',5:'C'})[new Date().getDay()]||'A',mobDay=today(),mobKind='morning',selected=allEx[0].id,historyId=null,mode='overview',exIndex=0,detail='';
+let tab='train',day=({1:'A',3:'B',5:'C'})[new Date().getDay()]||'A',mobDay=today(),mobKind='morning',selected=allEx[0].id,historyId=null,mode='overview',exIndex=0,detail='',groupId=DEFAULT_GROUP,groupOpen=false,programEditing=false,workoutDate=today();
 const BASE=Object.values(ORIGINAL).flatMap(x=>x.ex);
 const EXTRA=[
 {id:'X1',name:'Румынская тяга',unit:'повт.',weight:true,muscles:'Ягодицы · задняя поверхность бедра',tip:'Слегка согни колени, отведи таз назад, веди вес вдоль ног. Остановись до потери контроля поясницы.'},
@@ -18,33 +29,48 @@ const EXTRA=[
 {id:'X5',name:'Боковая планка',unit:'сек',weight:false,muscles:'Корпус',tip:'Опора на предплечье и стопы или колени. Удерживай корпус ровно, свободно дыши.'}];
 const LIB=[...BASE,...EXTRA];
 function sessionEx(s){return s.exerciseSnapshot||ORIGINAL[s.day].ex}
-function sameExercise(s,id){return sessionEx(s).find(x=>x.id===id)?.name===byId[id]?.name}
-function applyCustom(){for(const [d,p] of Object.entries(PROGRAM)){p.ex=ORIGINAL[d].ex.map(base=>{const c=state.custom?.[base.id];const x=LIB.find(z=>z.id===c?.source)||c?.snapshot;if(!x)return {...base};return {...base,name:x.name,unit:x.unit,weight:x.weight,visualId:x.id,sets:c.sets||base.sets,plan:c.plan||base.plan,rest:c.rest||base.rest,restLabel:(c.rest||base.rest)+' с'} });for(const e of p.ex)byId[e.id]=e}allEx.splice(0,allEx.length,...Object.values(PROGRAM).flatMap(p=>p.ex))}
-function infoFor(e){return EX_VIS[e.visualId||e.id]||LIB.find(x=>x.id===(e.visualId||e.id)&&x.tip)||state.custom?.[e.id]?.snapshot||{muscles:'',tip:'Выполняй контролируемо.'}}
+function sameExercise(s,id,e=workoutExercise(id)){return sessionGroup(s)===groupId&&sessionEx(s).find(x=>x.id===id)?.name===e?.name}
+function applyCustom(){
+ const current=programFor(activeGroup());
+ for(const k of WORKOUT_DAYS)PROGRAM[k]=current[k];
+ for(const key of Object.keys(byId))delete byId[key];
+ allEx.splice(0,allEx.length,...Object.values(PROGRAM).flatMap(p=>p.ex));
+ for(const e of allEx)byId[e.id]=e;
+ if(!allEx.some(e=>e.id===selected))selected=allEx[0]?.id||'';
+}
+function infoFor(e){return EX_VIS[e.visualId||e.id]||LIB.find(x=>x.id===(e.visualId||e.id)&&x.tip)||customFor()?.[e.id]?.snapshot||(e.tip?e:{muscles:e.muscles||'',tip:'Выполняй контролируемо.'})}
 function replacePanel(e){return `<div class="card stack"><h3>Заменить упражнение</h3><small>Замена действует на будущие тренировки. История сохраняется.</small><input placeholder="Поиск в библиотеке" oninput="filterReplacement(this)"><label>Упражнение<select id="replacement" onchange="replacementDefaults()">${LIB.map(x=>`<option value="${x.id}" ${x.id===(e.visualId||e.id)?'selected':''}>${esc(x.name)}</option>`).join('')}</select></label><label>Подходы<input id="replacementSets" inputmode="numeric" type="number" min="1" max="12" value="${e.sets}"></label><label>Повторы / секунды<input id="replacementReps" value="${esc(e.plan.split('×')[1]?.trim()||'10')}"></label><label>Отдых, сек<input id="replacementRest" inputmode="numeric" type="number" min="0" max="600" value="${e.rest}"></label><button class="primary" onclick="replaceExercise()">Сохранить замену</button></div>`}
 function replacementDefaults(){const x=LIB.find(z=>z.id===document.getElementById('replacement').value);if(x){document.getElementById('replacementReps').value=x.plan?.split('×')[1]?.trim()||(x.unit==='сек'?'30 с':'10–12');}}
-function replaceExercise(){const old=PROGRAM[day].ex[exIndex],d=draft(),x=LIB.find(z=>z.id===document.getElementById('replacement').value),n=Number(document.getElementById('replacementSets').value),r=document.getElementById('replacementReps').value.trim(),rest=Number(document.getElementById('replacementRest').value);if(!x||!Number.isInteger(n)||n<1||n>12||!r||r.length>40||!Number.isInteger(rest)||rest<1||rest>600){alert('Проверь подходы, повторы и отдых.');return}if(d.entries[old.id].some(a=>a.done)){alert('Сначала сохрани текущую тренировку: в этом упражнении уже есть выполненные подходы.');return}state.custom??={};state.custom[old.id]={source:x.id,snapshot:{id:x.id,name:x.name,unit:x.unit,weight:x.weight,muscles:x.muscles,tip:x.tip},sets:n,plan:n+' × '+r,rest};applyCustom();const e=byId[old.id],prev=previous(e.id);d.entries[e.id]=Array.from({length:n},(_,i)=>{const a=prev?.entries[e.id]?.[i];return {w:a?.done?a.w:'',r:a?.done?a.r:'',done:false}});delete state.plans[e.id];if(d.notes)delete d.notes[e.id];d.exerciseSnapshot=JSON.parse(JSON.stringify(PROGRAM[day].ex));detail='';save();render()}
-applyCustom();
-function latest(d){return state.history.filter(x=>x.day===d).sort((a,b)=>b.date.localeCompare(a.date)||(b.savedAt||0)-(a.savedAt||0))[0]}
-function draft(){if(!state.drafts[day]){const prev=latest(day);state.drafts[day]={day,date:today(),entries:Object.fromEntries(PROGRAM[day].ex.map(e=>[e.id,Array.from({length:e.sets},(_,i)=>({w:previous(e.id)?.entries[e.id]?.[i]?.done?previous(e.id).entries[e.id][i].w:'',r:previous(e.id)?.entries[e.id]?.[i]?.done?previous(e.id).entries[e.id][i].r:'',done:false}))])),notes:{},cool:[],comment:'',exerciseSnapshot:JSON.parse(JSON.stringify(PROGRAM[day].ex))};save()}return state.drafts[day]}
-function navigate(t){tab=t;historyId=null;mode='overview';detail='';mediaManageOpen=false;render();window.scrollTo(0,0)}function chooseDay(d){day=d;mode='overview';detail='';render()}
-function timerHTML(){return `<div id="timerBox" class="timer" ${state.timer?'':'hidden'} style="${state.timer?'':'display:none'}"><div><small>ОТДЫХ</small><br><strong id="clock">00:00</strong></div><small>Между подходами</small><button onclick="changeTimer(-15)">−15</button><button onclick="changeTimer(30)">+30</button><button onclick="stopTimer()">Стоп</button></div>`}
-function startTimer(sec){state.timer={end:Date.now()+sec*1000,day};save();updateTimer()}function changeTimer(sec){if(state.timer){state.timer.end=Math.max(Date.now(),state.timer.end+sec*1000);save();updateTimer()}}function stopTimer(){state.timer=null;save();updateTimer()}
-function updateTimer(){const box=document.getElementById('timerBox');if(!box)return;box.hidden=!state.timer;box.style.display=state.timer?'flex':'none';if(!state.timer)return;const n=Math.max(0,Math.ceil((state.timer.end-Date.now())/1000));document.getElementById('clock').textContent=n?`${String(Math.floor(n/60)).padStart(2,'0')}:${String(n%60).padStart(2,'0')}`:'Готово';}setInterval(updateTimer,500);
+function replaceExercise(){
+ const old=currentWorkout().ex[exIndex],d=draft(),x=LIB.find(z=>z.id===document.getElementById('replacement').value),n=Number(document.getElementById('replacementSets').value),r=document.getElementById('replacementReps').value.trim(),rest=Number(document.getElementById('replacementRest').value);
+ if(!old||!x||!Number.isInteger(n)||n<1||n>12||!r||r.length>40||!Number.isInteger(rest)||rest<1||rest>600){alert('Проверь подходы, повторы и отдых.');return}
+ if(d.entries[old.id].some(a=>a.done)){alert('Сначала сохрани текущую тренировку: в этом упражнении уже есть выполненные подходы.');return}
+ if(!PROGRAM[day].ex.some(e=>e.id===old.id)){alert('Упражнение больше не входит в текущий комплекс.');return}
+ const info=infoFor(x);customFor()[old.id]={source:x.id,snapshot:{id:x.id,name:x.name,unit:x.unit,weight:x.weight,muscles:info.muscles,tip:info.tip},sets:n,plan:n+' × '+r,rest};
+ applyCustom();const e=byId[old.id];
+ d.exerciseSnapshot=JSON.parse(JSON.stringify(d.exerciseSnapshot||PROGRAM[day].ex));d.exerciseSnapshot[exIndex]={...e};
+ const prev=previous(e.id,e);d.entries[e.id]=Array.from({length:n},(_,i)=>{const a=prev?.entries[e.id]?.[i];return {w:a?.done?a.w:'',r:a?.done?a.r:'',done:false}});
+ delete plansFor()[e.id];if(d.notes)delete d.notes[e.id];detail='';save();render()
+}
+function buildDraft(){
+ const p=PROGRAM[day];
+ return {groupId,day,date:workoutDate,entries:Object.fromEntries(p.ex.map(e=>{const prev=previous(e.id,e);return [e.id,Array.from({length:e.sets},(_,i)=>{const a=prev?.entries[e.id]?.[i];return {w:a?.done?a.w:'',r:a?.done?a.r:'',done:false}})]})),notes:{},cool:[],comment:'',exerciseSnapshot:JSON.parse(JSON.stringify(p.ex)),coolSnapshot:JSON.parse(JSON.stringify(p.cool))};
+}
+function previewDraft(){const d=existingDraft();return d&&workoutStarted(d)?d:buildDraft()}
+function draft(){let d=existingDraft();if(!d||!workoutStarted(d)){d=buildDraft();state.groupDrafts[workoutKey()]=d;save()}return d}
+function navigate(t){tab=t;historyId=null;mode='overview';detail='';mediaManageOpen=false;programEditing=false;groupOpen=false;render();window.scrollTo(0,0)}
+function timerForWorkout(){const t=state.timer;if(!t)return null;if((t.groupId||DEFAULT_GROUP)!==groupId||t.day&&t.day!==day||t.date&&t.date!==workoutDate)return null;return t}
+function timerHTML(){return `<div id="timerBox" class="timer" ${timerForWorkout()?'':'hidden'} style="${timerForWorkout()?'':'display:none'}"><div><small>ОТДЫХ</small><br><strong id="clock">00:00</strong></div><small>Между подходами</small><button onclick="changeTimer(-15)">−15</button><button onclick="changeTimer(30)">+30</button><button onclick="stopTimer()">Стоп</button></div>`}
+function startTimer(sec){state.timer={end:Date.now()+sec*1000,day,groupId,date:workoutDate};save();updateTimer()}function changeTimer(sec){if(timerForWorkout()){state.timer.end=Math.max(Date.now(),state.timer.end+sec*1000);save();updateTimer()}}function stopTimer(){if(timerForWorkout())state.timer=null;save();updateTimer()}
+function updateTimer(){const box=document.getElementById('timerBox');if(!box)return;const t=timerForWorkout();box.hidden=!t;box.style.display=t?'flex':'none';if(!t)return;const n=Math.max(0,Math.ceil((state.timer.end-Date.now())/1000));document.getElementById('clock').textContent=n?`${String(Math.floor(n/60)).padStart(2,'0')}:${String(n%60).padStart(2,'0')}`:'Готово';}setInterval(updateTimer,500);
 function editSet(id,i,k,v){const s=draft().entries[id][i];s[k]=v;s.done=false;save();const b=document.getElementById(`set-${id}-${i}`);if(b){b.classList.remove('done');b.closest('.setrow')?.classList.remove('set-complete');b.textContent='✓';b.setAttribute('aria-pressed','false')}updateProgress()}
-function toggleSet(id,i){const e=byId[id],s=draft().entries[id][i];if(!s.done&&(!String(s.r).trim()||!Number.isFinite(Number(s.r))||Number(s.r)<=0||!Number.isInteger(Number(s.r))|| (e.weight&&(!String(s.w).trim()||!Number.isFinite(weightNum(s.w))||weightNum(s.w)<0)))){alert('Укажи фактические повторы/секунды и вес. Для собственного веса введи 0.');return}if(!s.done&&e.weight)s.w=String(weightNum(s.w));s.done=!s.done;save();if(s.done&&state.autoTimer===true)startTimer(e.rest);render()}
+function toggleSet(id,i){const e=workoutExercise(id),s=draft().entries[id][i];if(!s.done&&(!String(s.r).trim()||!Number.isFinite(Number(s.r))||Number(s.r)<=0||!Number.isInteger(Number(s.r))|| (e.weight&&(!String(s.w).trim()||!Number.isFinite(weightNum(s.w))||weightNum(s.w)<0)))){alert('Укажи фактические повторы/секунды и вес. Для собственного веса введи 0.');return}if(!s.done&&e.weight)s.w=String(weightNum(s.w));s.done=!s.done;save();if(s.done&&state.autoTimer===true)startTimer(e.rest);render()}
 function updateProgress(){
- const d=draft(),sets=Object.values(d.entries).flat(),total=sets.length,n=sets.filter(x=>x.done).length;
+ if(!groupOpen||programEditing)return;
+ const d=previewDraft(),sets=Object.values(d.entries).flat(),total=sets.length,n=sets.filter(x=>x.done).length;
  const el=document.getElementById('setProgress');if(el)el.textContent=`${n} из ${total} подходов`;
- const bar=document.getElementById('setBar');if(bar)bar.style.width=`${100*n/total}%`;
- const ring=document.getElementById('exerciseRing');
- if(ring&&mode==='exercise'){
-  const a=d.entries[PROGRAM[day].ex[exIndex].id],done=a.filter(x=>x.done).length;
-  ring.style.setProperty('--ring-progress',`${100*done/a.length}%`);
-  ring.setAttribute('aria-valuemax',a.length);ring.setAttribute('aria-valuenow',done);
-  document.getElementById('exerciseRingCount').textContent=`${done}/${a.length}`;
-  const count=document.getElementById('exerciseSetCount');if(count)count.textContent=`${done} из ${a.length}`;
- }
+ const bar=document.getElementById('setBar');if(bar)bar.style.width=total?`${100*n/total}%`:'0%';
+ const count=document.getElementById('exerciseSetCount');if(count&&mode==='exercise'){const a=d.entries[currentWorkout().ex[exIndex].id];count.textContent=`${a.filter(x=>x.done).length} из ${a.length}`}
 }
 function setCheck(arr,i,checked){const j=arr.indexOf(i);if(checked&&j<0)arr.push(i);else if(!checked&&j>=0)arr.splice(j,1);save()}
 const STRETCH=[
@@ -77,26 +103,34 @@ function mobTimerHTML(){return `<div class="card stack"><div class="row between"
 setInterval(updateMobTimer,250);
 
 
-function previous(id){return state.history.filter(x=>sameExercise(x,id)&&x.entries[id]?.some(a=>a.done)).sort((a,b)=>b.date.localeCompare(a.date)||(b.savedAt||0)-(a.savedAt||0))[0]}
+function previous(id,e=workoutExercise(id)){return state.history.filter(x=>sameExercise(x,id,e)&&x.date<=workoutDate&&x.entries[id]?.some(a=>a.done)).sort((a,b)=>b.date.localeCompare(a.date)||(b.savedAt||0)-(a.savedAt||0))[0]}
 function workoutStarted(d){return d.started===true||Number.isInteger(d.cursor)||Object.values(d.entries).flat().some(a=>a.done)||d.cool.length>0}
-function goExercise(i){const d=draft();exIndex=Math.max(0,Math.min(i,PROGRAM[day].ex.length));mode=exIndex>=PROGRAM[day].ex.length?'cool':'exercise';detail='';d.started=true;d.cursor=exIndex;save();render();window.scrollTo(0,0)}
-function begin(){goExercise(Math.min(draft().cursor||0,PROGRAM[day].ex.length))}
+function goExercise(i){const p=currentWorkout();if(!p.ex.length)return;const d=draft();exIndex=Math.max(0,Math.min(i,p.ex.length));mode=exIndex>=p.ex.length?'cool':'exercise';detail='';d.started=true;d.cursor=exIndex;activeGroup().schedule[workoutDate]=day;save();render();window.scrollTo(0,0)}
+function begin(){goExercise(Math.min(existingDraft()?.cursor||0,currentWorkout().ex.length))}
 function overview(){mode='overview';detail='';render();window.scrollTo(0,0)}
 function workoutMenuHTML(){return `<dialog id="workoutMenu" class="workout-menu" aria-labelledby="workoutMenuTitle"><div class="stack"><div class="row between"><h3 id="workoutMenuTitle">Тренировка ${day}</h3><button class="menu-close" aria-label="Закрыть меню" onclick="closeWorkoutMenu()">×</button></div><p class="muted">Что сделать с текущей тренировкой?</p><button class="primary wide" onclick="continueWorkout()">Продолжить тренировку</button><button class="wide" onclick="finish()">Завершить тренировку и сохранить данные</button><button class="danger wide" onclick="cancelWorkout()">Отменить тренировку</button></div></dialog>`}
 function openWorkoutMenu(){const el=document.getElementById('workoutMenu');if(el&&!el.open)el.showModal()}
 function closeWorkoutMenu(){const el=document.getElementById('workoutMenu');if(el?.open)el.close()}
 function continueWorkout(){closeWorkoutMenu();if(mode==='overview')begin()}
-function clearWorkoutTimer(){if(!state.timer?.day||state.timer.day===day)state.timer=null}
+function clearWorkoutTimer(){if(timerForWorkout())state.timer=null}
 function cancelWorkout(){
  if(!workoutStarted(draft()))return;
  if(!confirm('Отменить тренировку? Введённые данные текущей тренировки будут удалены без сохранения. История и программа не изменятся.'))return;
- closeWorkoutMenu();delete state.drafts[day];clearWorkoutTimer();stretchOpen='';save();overview()
+ closeWorkoutMenu();delete state.groupDrafts[workoutKey()];clearWorkoutTimer();stretchOpen='';save();overview()
 }
 function addSet(id){const a=draft().entries[id],last=a[a.length-1];a.push({w:last?.w??'',r:last?.r??'',done:false});save();render()}
-function removeSet(id,i){const a=draft().entries[id];if(i<byId[id].sets)return;if(a[i].done&&!confirm('Удалить выполненный дополнительный подход?'))return;a.splice(i,1);save();render()}
-function setPlan(id,v){state.plans??={};state.plans[id]=v;save()}
+function removeSet(id,i){const a=draft().entries[id];if(i<workoutExercise(id).sets)return;if(a[i].done&&!confirm('Удалить выполненный дополнительный подход?'))return;a.splice(i,1);save();render()}
+function setPlan(id,v){plansFor()[id]=v;save()}
 function progressHeader(){return `<div class="row between"><small>Подходы за тренировку</small><small id="setProgress"></small></div><div class="progress"><span id="setBar"></span></div>`}
-function train(){const p=PROGRAM[day],d=draft();if(mode==='exercise')return exerciseScreen(p,d);if(mode==='cool')return coolScreen(p,d);return `<div class="eyebrow">ТВОЯ ПРОГРАММА · V1.6</div><div class="days">${Object.entries(PROGRAM).map(([k,v])=>`<button class="${k===day?'active':''}" onclick="chooseDay('${k}')"><small>${v.day.slice(0,2).toUpperCase()}</small><strong>${k}</strong></button>`).join('')}</div><h2>${p.day} · ${day}</h2><p class="muted">${p.focus}</p><div class="card"><label class="field"><small>Дата тренировки</small><input type="date" value="${esc(d.date)}" onchange="draft().date=this.value||today();save()"></label><div class="spacer"></div>${progressHeader()}</div><button class="primary wide" onclick="begin()">${workoutStarted(d)?'Продолжить тренировку':'Начать тренировку'} →</button>${workoutStarted(d)?`<button class="wide manage-session" onclick="openWorkoutMenu()">Управление тренировкой</button>${workoutMenuHTML()}`:''}<div class="exercise-list">${p.ex.map((e,i)=>{let a=d.entries[e.id],n=a.filter(x=>x.done).length;return `<button class="exercise-list-item" onclick="goExercise(${i})"><span class="exercise-number">${i+1}</span><span class="exercise-list-text"><strong>${esc(e.name)}</strong><small>${esc(e.plan)} · ${n}/${a.length} выполнено</small></span><span class="${n===a.length?'complete':''}">${n===a.length?'✓':'›'}</span></button>`}).join('')}<button class="exercise-list-item" onclick="goExercise(${p.ex.length})"><span class="exercise-number">↘</span><span class="exercise-list-text"><strong>Заминка</strong><small>${d.cool.length}/${p.cool.length} · без ходьбы</small></span><span>›</span></button></div>${timerHTML()}<p class="muted">Черновик сохраняется автоматически.</p>`}
+function train(){
+ if(!groupOpen)return groupChooser();
+ if(programEditing)return groupEditorHTML();
+ const p=currentWorkout(),d=previewDraft(),started=workoutStarted(d);
+ if(mode==='exercise')return exerciseScreen(p,d);if(mode==='cool')return coolScreen(p,d);
+ return `${groupTopHTML()}${calendarHTML()}${complexTabs()}<div class="row between group-complex-heading"><h3>Комплекс ${day}</h3><small>${p.ex.length} упр.</small></div>${p.focus?`<p class="muted">${esc(p.focus)}</p>`:''}
+ ${draftLinksHTML()}
+ ${p.ex.length?`<div class="card group-session">${progressHeader()}</div><button class="primary wide group-start" onclick="begin()">${started?'Продолжить тренировку':'Начать комплекс '+day} →</button>${started?`<button class="wide manage-session" onclick="openWorkoutMenu()">Управление тренировкой</button>${workoutMenuHTML()}`:''}<div class="exercise-list">${p.ex.map((e,i)=>{let a=d.entries[e.id],n=a.filter(x=>x.done).length;return `<button class="exercise-list-item" onclick="goExercise(${i})"><span class="exercise-number">${i+1}</span><span class="exercise-list-text"><strong>${esc(e.name)}</strong><small>${esc(e.plan)} · ${n}/${a.length} выполнено</small></span><span class="${n===a.length?'complete':''}">${n===a.length?'✓':'›'}</span></button>`}).join('')}<button class="exercise-list-item" onclick="goExercise(${p.ex.length})"><span class="exercise-number">↘</span><span class="exercise-list-text"><strong>Заминка</strong><small>${d.cool.length}/${p.cool.length}${p.cool.length?' · без ходьбы':''}</small></span><span>›</span></button></div>${timerHTML()}<p class="muted">Черновик сохраняется автоматически.</p>`:`<div class="card stack"><h3>Пока нет упражнений</h3><p class="muted">Составь этот комплекс из упражнений библиотеки.</p><button class="primary wide" onclick="editGroupProgram()">Добавить упражнения</button></div>`}`;
+}
 function exerciseScreen(p,d){
  const e=p.ex[exIndex],a=d.entries[e.id],prev=previous(e.id),info=infoFor(e),next=p.ex[exIndex+1],done=a.filter(v=>v.done).length;
  const notePlaceholder=e.name.includes('резинкой')?'Сопротивление резинки, заметки':'Заметки (техника, самочувствие)';
@@ -110,10 +144,7 @@ function exerciseScreen(p,d){
  ${timerHTML()}
  <div class="workout-hero">
   <div class="visual">${localVisual(e.visualId||e.id,exerciseVisual(e.id))}</div>
-  <div class="exercise-progress">
-   <div id="exerciseRing" class="exercise-ring" role="progressbar" aria-label="Выполнено подходов упражнения" aria-valuemin="0" aria-valuemax="${a.length}" aria-valuenow="${done}" style="--ring-progress:${100*done/a.length}%"><div><strong id="exerciseRingCount">${done}/${a.length}</strong><small>подходы</small></div></div>
-   <small>Выполнено</small>
-  </div>
+
  </div>
  <h2 class="exercise-title">${esc(e.name)}</h2>
  <p class="muted center workout-muscles">${esc(info.muscles)}</p>
@@ -121,7 +152,7 @@ function exerciseScreen(p,d){
  ${detail==='tech'?`<div class="card"><h3>Техника</h3><p>${esc(info.tip)}</p><p class="muted">Работай в комфортной амплитуде.</p></div>`:detail==='hist'?exerciseHistory(e):detail==='replace'?replacePanel(e):detail==='notes'?`<div class="card stack"><h3>Заметки</h3><textarea rows="3" aria-label="Заметки к упражнению" placeholder="${esc(notePlaceholder)}" oninput="draft().notes??={};draft().notes['${e.id}']=this.value;save()">${esc(d.notes?.[e.id]||'')}</textarea></div>`:''}
  <div class="plan-strip workout-plan">
   <div><small>План</small><strong>${esc(e.plan)}</strong></div>
-  ${e.weight?`<label><small>Целевой вес, кг</small><input type="text" inputmode="decimal" autocomplete="off" placeholder="—" value="${esc(state.plans?.[e.id]??'')}" oninput="setPlan('${e.id}',this.value)"></label>`:''}
+  ${e.weight?`<label><small>Целевой вес, кг</small><input type="text" inputmode="decimal" autocomplete="off" placeholder="—" value="${esc(plansFor()?.[e.id]??'')}" oninput="setPlan('${e.id}',this.value)"></label>`:''}
   <button class="rest-start" aria-label="Запустить таймер отдыха ${esc(e.restLabel)}" onclick="startTimer(${e.rest})"><small>◷ Отдых</small><strong>${esc(e.restLabel)}</strong></button>
  </div>
  <div class="row between sets-heading"><h3>Подходы</h3><small id="exerciseSetCount">${done} из ${a.length}</small></div>
@@ -133,17 +164,152 @@ function exerciseScreen(p,d){
  <div class="workout-nav"><button aria-label="Предыдущее упражнение" onclick="${exIndex?`goExercise(${exIndex-1})`:'overview()'}">‹</button><button class="primary next" onclick="goExercise(${exIndex+1})"><span><small>Далее</small><strong>${next?esc(next.name):'Заминка'}</strong></span><b aria-hidden="true">›</b></button></div>`
 }
 function exerciseHistory(e){const h=state.history.filter(s=>sameExercise(s,e.id)&&s.entries[e.id]?.some(a=>a.done)).sort((a,b)=>b.date.localeCompare(a.date)||(b.savedAt||0)-(a.savedAt||0));return `<div class="card"><h3>История упражнения</h3>${h.length?h.map(s=>`<div class="history-item"><span><strong>${fmt(s.date)}</strong><br><small>${s.entries[e.id].filter(a=>a.done).map(a=>`${e.weight?esc(a.w)+' кг × ':''}${esc(a.r)} ${e.unit}`).join(' · ')}</small></span></div>`).join(''):'<p class="muted">Пока нет завершённых тренировок.</p>'}</div>`}
-function coolScreen(p,d){return `<div class="row between"><button class="round" aria-label="К списку упражнений" onclick="overview()">←</button><small>Сессия ${day} · завершение</small><button class="workout-end" onclick="openWorkoutMenu()">Завершить</button></div>${workoutMenuHTML()}${timerHTML()}<h2>Заминка ${day}</h2><p class="muted">Без ходьбы · мягкая растяжка</p><div class="card">${checkList(p.cool,d.cool,'toggleCool')}<p class="notice">Не усиливай боль и не растягивай через боль, распространяющуюся по ноге.</p></div><div class="card"><label class="field"><small>Самочувствие / заметки тренировки</small><textarea rows="3" oninput="draft().comment=this.value;save()">${esc(d.comment)}</textarea></label></div>${progressHeader()}<div class="workout-nav"><button onclick="goExercise(${p.ex.length-1})">‹‹</button><button class="primary next" onclick="finish()">Завершить и сохранить ✓</button></div>`}
+function coolScreen(p,d){return `<div class="row between"><button class="round" aria-label="К списку упражнений" onclick="overview()">←</button><small>Сессия ${day} · завершение</small><button class="workout-end" onclick="openWorkoutMenu()">Завершить</button></div>${workoutMenuHTML()}${timerHTML()}<h2>Заминка ${day}</h2>${p.cool.length?'<p class="muted">Без ходьбы · мягкая растяжка</p>':''}<div class="card">${p.cool.length?checkList(p.cool,d.cool,'toggleCool')+'<p class="notice">Не усиливай боль и не растягивай через боль, распространяющуюся по ноге.</p>':'<p class="muted">В этом комплексе заминка не задана.</p>'}</div><div class="card"><label class="field"><small>Самочувствие / заметки тренировки</small><textarea rows="3" oninput="draft().comment=this.value;save()">${esc(d.comment)}</textarea></label></div>${progressHeader()}<div class="workout-nav"><button onclick="goExercise(${p.ex.length-1})">‹‹</button><button class="primary next" onclick="finish()">Завершить и сохранить ✓</button></div>`}
 
 function toggleCool(i,c){setCheck(draft().cool,i,c)}
-function finish(){const d=draft();const a=Object.values(d.entries).flat(),n=a.filter(x=>x.done).length;if(!n){alert('Отметь хотя бы один выполненный подход.');return}if(n<a.length&&!confirm(`Выполнено ${n} из ${a.length}. Сохранить неполную тренировку?`))return;state.history.push({...JSON.parse(JSON.stringify(d)),id:Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,7),savedAt:Date.now()});closeWorkoutMenu();delete state.drafts[day];clearWorkoutTimer();save();navigate('history')}
+function finish(){const d=draft();const a=Object.values(d.entries).flat(),n=a.filter(x=>x.done).length;if(!n){alert('Отметь хотя бы один выполненный подход.');return}if(n<a.length&&!confirm(`Выполнено ${n} из ${a.length}. Сохранить неполную тренировку?`))return;state.history.push({...JSON.parse(JSON.stringify(d)),id:Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,7),savedAt:Date.now()});closeWorkoutMenu();delete state.groupDrafts[workoutKey()];clearWorkoutTimer();save();navigate('history')}
 function mobility(){mobDay=today();const key=mobDay+'-'+mobKind;const arr=state.mobility[key]||[];return `<h2>Ежедневная мобильность</h2>${mobTimerHTML()}<div class="card"><div class="days" style="grid-template-columns:1fr 1fr"><button class="${mobKind==='morning'?'active':''}" onclick="mobKind='morning';stretchOpen='';render()">Утро <small>10 мин</small></button><button class="${mobKind==='evening'?'active':''}" onclick="mobKind='evening';stretchOpen='';render()">Вечер <small>12–15 мин</small></button></div><div class="row between"><strong>Выполнено</strong><span id="mobCount">${arr.length}/${MOB[mobKind].length}</span></div>${checkList(MOB[mobKind],arr,'toggleMob')}</div><p class="notice">В дни зала вечернюю растяжку можно сократить, если она повторяет заминку. Пропускай движения, которые провоцируют симптомы.</p>`}
 function toggleMob(i,c){const k=mobDay+'-'+mobKind;state.mobility[k]??=[];setCheck(state.mobility[k],i,c);document.getElementById('mobCount').textContent=`${state.mobility[k].length}/${MOB[mobKind].length}`}
-function history(){if(historyId){const s=state.history.find(x=>x.id===historyId);if(!s){historyId=null;return history()}return `<button class="linklike" onclick="historyId=null;render()">‹ Все тренировки</button><h2>${fmt(s.date)} · ${s.day}</h2>${sessionEx(s).map(e=>`<div class="card"><h3>${esc(e.name)}</h3><p>${s.entries[e.id].map((a,i)=>`${i+1}. ${a.done?`${e.weight?esc(a.w)+' кг × ':''}${esc(a.r)} ${e.unit}`:'Не выполнен'}`).join('<br>')}</p><small>${esc(s.notes?.[e.id]||'')}</small></div>`).join('')}<div class="card"><h3>Заминка</h3><p>${s.cool.length} / ${PROGRAM[s.day].cool.length}</p><p>${esc(s.comment)}</p></div><button class="danger wide" onclick="deleteHistory()">Удалить запись</button>`}return `<h2>История тренировок</h2><p class="muted">${state.history.length} сохранено</p><div class="card">${state.history.length?[...state.history].sort((a,b)=>b.date.localeCompare(a.date)||b.savedAt-a.savedAt).map(s=>`<button class="history-item" onclick="openHistory('${esc(s.id)}')"><span><strong>${fmt(s.date)} · ${s.day}</strong><br><small>${PROGRAM[s.day].day} · ${Object.values(s.entries).flat().filter(a=>a.done).length} подходов</small></span><span>›</span></button>`).join(''):'<p class="muted">Здесь появятся завершённые тренировки.</p>'}</div>`}
+function history(){if(historyId){const s=state.history.find(x=>x.id===historyId);if(!s){historyId=null;return history()}return `<button class="linklike" onclick="historyId=null;render()">‹ Все тренировки</button><h2>${fmt(s.date)} · ${s.day}</h2><p class="muted">${esc(groupName(sessionGroup(s)))}</p>${sessionEx(s).map(e=>`<div class="card"><h3>${esc(e.name)}</h3><p>${s.entries[e.id].map((a,i)=>`${i+1}. ${a.done?`${e.weight?esc(a.w)+' кг × ':''}${esc(a.r)} ${e.unit}`:'Не выполнен'}`).join('<br>')}</p><small>${esc(s.notes?.[e.id]||'')}</small></div>`).join('')}<div class="card"><h3>Заминка</h3><p>${s.cool.length} / ${(s.coolSnapshot||ORIGINAL[s.day].cool).length}</p><p>${esc(s.comment)}</p></div><button class="danger wide" onclick="deleteHistory()">Удалить запись</button>`}return `<h2>История тренировок</h2><p class="muted">${state.history.length} сохранено</p><div class="card">${state.history.length?[...state.history].sort((a,b)=>b.date.localeCompare(a.date)||b.savedAt-a.savedAt).map(s=>`<button class="history-item" onclick="openHistory('${esc(s.id)}')"><span><strong>${fmt(s.date)} · ${s.day}</strong><br><small>${esc(groupName(sessionGroup(s)))} · ${Object.values(s.entries).flat().filter(a=>a.done).length} подходов</small></span><span>›</span></button>`).join(''):'<p class="muted">Здесь появятся завершённые тренировки.</p>'}</div>`}
 function openHistory(id){historyId=id;render();window.scrollTo(0,0)}function deleteHistory(){if(confirm('Удалить эту тренировку из истории?')){state.history=state.history.filter(s=>s.id!==historyId);historyId=null;save();render()}}
-function progress(){const e=byId[selected],points=state.history.filter(s=>s.day===e.id[0]&&sameExercise(s,e.id)).map(s=>({date:s.date,v:Math.max(-1,...s.entries[e.id].filter(a=>a.done).map(a=>e.weight?weightNum(a.w):Number(a.r)))})).filter(x=>Number.isFinite(x.v)&&x.v>=0).sort((a,b)=>a.date.localeCompare(b.date));const unit=e.weight?'кг':e.unit;let chart='<p class="muted">Заверши тренировку, чтобы увидеть прогресс.</p>';if(points.length){const a=points.slice(-20),lo=Math.min(...a.map(x=>x.v)),hi=Math.max(...a.map(x=>x.v)),pad=Math.max(1,(hi-lo)*.1),min=Math.max(0,lo-pad),max=hi+pad;const pos=a.map((x,i)=>[a.length===1?160:36+i*278/(a.length-1),130-(x.v-min)/(max-min)*100]);chart=`<div class="row between"><div><small>Последний результат</small><h2>${a.at(-1).v} ${unit}</h2></div><span class="pill">Лучший ${hi} ${unit}</span></div><svg class="svgchart" viewBox="0 0 330 155" role="img" aria-label="График прогресса"><g stroke="#344553" stroke-width="1"><path d="M36 30H314 M36 80H314 M36 130H314"/></g><g fill="#a7b5c2" font-size="10"><text x="0" y="34">${max.toFixed(1)}</text><text x="0" y="134">${min.toFixed(1)}</text><text x="36" y="150">${fmt(a[0].date).slice(0,5)}</text><text x="314" y="150" text-anchor="end">${fmt(a.at(-1).date).slice(0,5)}</text></g><polyline points="${pos.map(p=>p.join(',')).join(' ')}" fill="none" stroke="#7be4bb" stroke-width="3"/>${pos.map(p=>`<circle cx="${p[0]}" cy="${p[1]}" r="4" fill="#7be4bb"/>`).join('')}</svg><p class="muted">Последние ${a.length} сессий · ${e.weight?'максимальный вес':'максимум за подход'}</p>`}return `<h2>Прогресс</h2><div class="card"><label class="field"><small>Упражнение</small><select onchange="selected=this.value;render()">${allEx.map(x=>`<option value="${x.id}" ${x.id===selected?'selected':''}>${x.id[0]} · ${esc(x.name)}</option>`).join('')}</select></label></div><div class="card">${chart}</div><div class="card"><h3>Правило прогрессии</h3><p>Когда во всех подходах достиг верхней границы повторов, добавь вес (+2,5 кг на верх, +5 кг на ноги), если сохраняются техника и комфорт. При необходимости используй меньший шаг.</p></div>`}
-function settings(){return `<h2>Настройки и данные</h2><div class="card"><label class="checkline"><input type="checkbox" ${state.autoTimer===true?'checked':''} onchange="state.autoTimer=this.checked;save()"><span>Автоматический таймер<small>По умолчанию выключен. Можно запускать вручную.</small></span></label></div><div class="card stack"><h3>Резервная копия</h3><p class="muted">История и черновики хранятся на этом устройстве. Сохраняй копии: очистка данных Safari или удаление приложения может удалить историю.</p><button onclick="exportData()">Экспорт JSON</button><button onclick="document.getElementById('importFile').click()">Восстановить из JSON</button><input id="importFile" type="file" accept=".json,application/json" hidden onchange="importData(this)"></div><div class="card"><h3>Как записывать</h3><p class="muted">Вес гантели — одной гантели; 0 кг для собственного веса без дополнительного отягощения. Для односторонних упражнений — повторы на сторону. Для резинки указывай сопротивление в заметках.</p></div><div class="card"><h3>Установка на iPhone</h3><p>Открой размещённое по HTTPS приложение в Safari → Поделиться → На экран «Домой». После первого успешного кэширования оно работает офлайн.</p><p class="muted" id="offlineStatus">${location.protocol==='file:'?'Локальный просмотр: офлайн-установка требует веб-хостинга.':'Проверка офлайн-режима…'}</p></div><p class="muted">V1.6 · Локальный дневник · Без аккаунта и облачной синхронизации</p>`}
+function progressGroupPicker(){return state.groups.length>1?`<div class="card"><label class="field"><small>Группа тренировок</small><select onchange="selectProgressGroup(this.value)">${state.groups.map(g=>`<option value="${g.id}" ${g.id===groupId?'selected':''}>${esc(g.name)}</option>`).join('')}</select></label></div>`:''}
+function selectProgressGroup(id){if(!state.groups.some(g=>g.id===id))return;groupId=id;groupOpen=false;applyCustom();selected=allEx[0]?.id||'';render()}
+function progress(){const e=byId[selected]||allEx[0];if(!e)return '<h2>Прогресс</h2>'+progressGroupPicker()+'<div class="card"><p class="muted">В группе пока нет упражнений.</p></div>';const points=state.history.filter(s=>s.day===e.id[0]&&sameExercise(s,e.id,e)).map(s=>({date:s.date,v:Math.max(-1,...s.entries[e.id].filter(a=>a.done).map(a=>e.weight?weightNum(a.w):Number(a.r)))})).filter(x=>Number.isFinite(x.v)&&x.v>=0).sort((a,b)=>a.date.localeCompare(b.date));const unit=e.weight?'кг':e.unit;let chart='<p class="muted">Заверши тренировку, чтобы увидеть прогресс.</p>';if(points.length){const a=points.slice(-20),lo=Math.min(...a.map(x=>x.v)),hi=Math.max(...a.map(x=>x.v)),pad=Math.max(1,(hi-lo)*.1),min=Math.max(0,lo-pad),max=hi+pad;const pos=a.map((x,i)=>[a.length===1?160:36+i*278/(a.length-1),130-(x.v-min)/(max-min)*100]);chart=`<div class="row between"><div><small>Последний результат</small><h2>${a.at(-1).v} ${unit}</h2></div><span class="pill">Лучший ${hi} ${unit}</span></div><svg class="svgchart" viewBox="0 0 330 155" role="img" aria-label="График прогресса"><g stroke="#344553" stroke-width="1"><path d="M36 30H314 M36 80H314 M36 130H314"/></g><g fill="#a7b5c2" font-size="10"><text x="0" y="34">${max.toFixed(1)}</text><text x="0" y="134">${min.toFixed(1)}</text><text x="36" y="150">${fmt(a[0].date).slice(0,5)}</text><text x="314" y="150" text-anchor="end">${fmt(a.at(-1).date).slice(0,5)}</text></g><polyline points="${pos.map(p=>p.join(',')).join(' ')}" fill="none" stroke="#7be4bb" stroke-width="3"/>${pos.map(p=>`<circle cx="${p[0]}" cy="${p[1]}" r="4" fill="#7be4bb"/>`).join('')}</svg><p class="muted">Последние ${a.length} сессий · ${e.weight?'максимальный вес':'максимум за подход'}</p>`}return `<h2>Прогресс</h2>${progressGroupPicker()}<div class="card"><label class="field"><small>Упражнение</small><select onchange="selected=this.value;render()">${allEx.map(x=>`<option value="${x.id}" ${x.id===selected?'selected':''}>${x.id[0]} · ${esc(x.name)}</option>`).join('')}</select></label></div><div class="card">${chart}</div><div class="card"><h3>Правило прогрессии</h3><p>Когда во всех подходах достиг верхней границы повторов, добавь вес (+2,5 кг на верх, +5 кг на ноги), если сохраняются техника и комфорт. При необходимости используй меньший шаг.</p></div>`}
+function settings(){return `<h2>Настройки и данные</h2><div class="card"><label class="checkline"><input type="checkbox" ${state.autoTimer===true?'checked':''} onchange="state.autoTimer=this.checked;save()"><span>Автоматический таймер<small>По умолчанию выключен. Можно запускать вручную.</small></span></label></div><div class="card stack"><h3>Резервная копия</h3><p class="muted">История и черновики хранятся на этом устройстве. Сохраняй копии: очистка данных Safari или удаление приложения может удалить историю.</p><button onclick="exportData()">Экспорт JSON</button><button onclick="document.getElementById('importFile').click()">Восстановить из JSON</button><input id="importFile" type="file" accept=".json,application/json" hidden onchange="importData(this)"></div><div class="card"><h3>Как записывать</h3><p class="muted">Вес гантели — одной гантели; 0 кг для собственного веса без дополнительного отягощения. Для односторонних упражнений — повторы на сторону. Для резинки указывай сопротивление в заметках.</p></div><div class="card"><h3>Установка на iPhone</h3><p>Открой размещённое по HTTPS приложение в Safari → Поделиться → На экран «Домой». После первого успешного кэширования оно работает офлайн.</p><p class="muted" id="offlineStatus">${location.protocol==='file:'?'Локальный просмотр: офлайн-установка требует веб-хостинга.':'Проверка офлайн-режима…'}</p></div><p class="muted">V1.7 · Локальный дневник · Без аккаунта и облачной синхронизации</p>`}
 function exportData(){const b=new Blob([JSON.stringify(state,null,2)],{type:'application/json'});const u=URL.createObjectURL(b),a=document.createElement('a');a.href=u;a.download=`gym-tracker-${today()}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(u),1000)}
-async function importData(input){try{const x=JSON.parse(await input.files[0].text());if(!valid(x))throw Error();if(confirm('Заменить текущие локальные данные резервной копией?')){state=x;state.autoTimer??=false;state.plans??={};state.custom??={};applyCustom();save();render();alert('Резервная копия восстановлена.')}}catch(e){alert('Не удалось открыть резервную копию. Проверь формат файла.')}finally{input.value=''}}
-function render(){main.innerHTML=({train,mob:mobility,history,progress,settings,library})[tab]();document.querySelectorAll('.nav button').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));document.getElementById('storageWarning').textContent=warning;document.body.classList.toggle('workout',tab==='train'&&mode!=='overview');if(tab==='train'){updateProgress();updateTimer()}if(tab==='mob')updateMobTimer();hydrateMedia();if(tab==='settings'&&navigator.serviceWorker&&location.protocol!=='file:'){navigator.serviceWorker.getRegistration().then(r=>{const el=document.getElementById('offlineStatus');if(el)el.textContent=r?.active?'Офлайн-кэш активен.':'Офлайн-кэш пока не активен.'}).catch(()=>{})}}
+async function importData(input){try{const x=JSON.parse(await input.files[0].text());if(!valid(x))throw Error();if(confirm('Заменить текущие локальные данные резервной копией?')){state=x;state.autoTimer??=false;state.plans??={};state.custom??={};groupId=DEFAULT_GROUP;groupOpen=false;programEditing=false;workoutDate=today();day=selectedDayForDate(workoutDate);normalizeGroups();applyCustom();save();render();alert('Резервная копия восстановлена.')}}catch(e){alert('Не удалось открыть резервную копию. Проверь формат файла.')}finally{input.value=''}}
+function render(){main.innerHTML=({train,mob:mobility,history,progress,settings,library})[tab]();document.querySelectorAll('.nav button').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));document.getElementById('storageWarning').textContent=warning;document.body.classList.toggle('workout',tab==='train'&&groupOpen&&(mode==='exercise'||mode==='cool'));if(tab==='train'){updateProgress();updateTimer()}if(tab==='mob')updateMobTimer();hydrateMedia();if(tab==='settings'&&navigator.serviceWorker&&location.protocol!=='file:'){navigator.serviceWorker.getRegistration().then(r=>{const el=document.getElementById('offlineStatus');if(el)el.textContent=r?.active?'Офлайн-кэш активен.':'Офлайн-кэш пока не активен.'}).catch(()=>{})}}
+/* Workout groups. Legacy V1.x storage and finished sessions remain readable. */
+function defaultGroup(){return {id:DEFAULT_GROUP,name:'Для мобильности',schedule:{}}}
+function groupById(id){return state.groups?.find(g=>g.id===id)||state.groups?.find(g=>g.id===DEFAULT_GROUP)}
+function sessionGroup(s){return s.groupId||DEFAULT_GROUP}
+function groupName(id){return groupById(id)?.name||'Тренировка'}
+function activeGroup(){return groupById(groupId)}
+function groupBase(g){return g.program||(g.id===DEFAULT_GROUP?ORIGINAL:{})}
+function customFor(g=activeGroup()){return g.id===DEFAULT_GROUP?state.custom:(g.custom??={})}
+function plansFor(g=activeGroup()){return g.id===DEFAULT_GROUP?state.plans:(g.plans??={})}
+function programFor(g){
+ const source=groupBase(g),custom=g.id===DEFAULT_GROUP?state.custom:(g.custom||{});
+ return Object.fromEntries(WORKOUT_DAYS.map(k=>{
+  const p=source[k]||{day:k,focus:'',ex:[],cool:[]};
+  return [k,{...p,ex:p.ex.map(base=>{
+   const c=custom?.[base.id],x=LIB.find(z=>z.id===c?.source)||c?.snapshot;
+   if(!x)return {...base};
+   return {...base,name:x.name,unit:x.unit,weight:x.weight,visualId:x.visualId||x.id,sets:c.sets||base.sets,plan:c.plan||base.plan,rest:c.rest||base.rest,restLabel:(c.rest||base.rest)+' с',muscles:x.muscles,tip:x.tip};
+  })}];
+ }));
+}
+function allPrograms(){return state.groups.map(g=>programFor(g))}
+function allProgramExercises(){return allPrograms().flatMap(p=>Object.values(p).flatMap(x=>x.ex))}
+function allProgramCool(){return allPrograms().flatMap(p=>Object.values(p).flatMap(x=>x.cool))}
+function slotKey(gid,date,k){return gid+'|'+date+'|'+k}
+function workoutKey(){return slotKey(groupId,workoutDate,day)}
+function groupDrafts(gid=groupId){return Object.values(state.groupDrafts).filter(d=>sessionGroup(d)===gid)}
+function existingDraft(){return state.groupDrafts[workoutKey()]}
+function currentWorkout(){
+ const p=PROGRAM[day],d=existingDraft();
+ return d&&workoutStarted(d)?{...p,ex:d.exerciseSnapshot||p.ex,cool:d.coolSnapshot||p.cool}:p;
+}
+function workoutExercise(id){return currentWorkout().ex.find(e=>e.id===id)||byId[id]}
+function normalizeGroups(){
+ let changed=false;
+ if(!Array.isArray(state.groups)){state.groups=[defaultGroup()];changed=true}
+ if(!state.groups.some(g=>g.id===DEFAULT_GROUP)){state.groups.unshift(defaultGroup());changed=true}
+ for(const g of state.groups){g.schedule??={};if(g.id!==DEFAULT_GROUP){g.custom??={};g.plans??={}}}
+ if(!state.groupDrafts){state.groupDrafts={};changed=true}
+ for(const [k,d] of Object.entries(state.drafts||{})){
+  const key=slotKey(DEFAULT_GROUP,d.date,k);
+  if(!state.groupDrafts[key])state.groupDrafts[key]={...d,groupId:DEFAULT_GROUP,coolSnapshot:ORIGINAL[k].cool.map(x=>[...x])};
+  delete state.drafts[k];changed=true;
+ }
+ if(state.timer&&!state.timer.groupId){const old=Object.values(state.groupDrafts).filter(d=>sessionGroup(d)===DEFAULT_GROUP&&workoutStarted(d)&&(!state.timer.day||d.day===state.timer.day)).sort((a,b)=>b.date.localeCompare(a.date))[0];state.timer.groupId=DEFAULT_GROUP;if(old){state.timer.date=old.date;state.timer.day=old.day}changed=true}
+ if(changed&&!warning)save();
+}
+function dateShift(iso,n){const d=new Date(iso+'T12:00:00');d.setDate(d.getDate()+n);return localDate(d)}
+function localDate(d){return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`}
+function weekStart(iso){const d=new Date(iso+'T12:00:00');return dateShift(iso,-((d.getDay()+6)%7))}
+function validDate(v){return typeof v==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(v)&&!Number.isNaN(new Date(v+'T12:00:00').getTime())&&localDate(new Date(v+'T12:00:00'))===v}
+function suggestedDay(iso,g=activeGroup()){
+ const planned=g.schedule?.[iso];if(WORKOUT_DAYS.includes(planned))return planned;
+ const open=groupDrafts(g.id).find(d=>d.date===iso&&workoutStarted(d));if(open)return open.day;
+ const last=state.history.filter(s=>sessionGroup(s)===g.id&&s.date===iso).sort((a,b)=>(b.savedAt||0)-(a.savedAt||0))[0];if(last)return last.day;
+ return selectedDayForDate(iso);
+}
+function selectedDayForDate(iso){return ({1:'A',3:'B',5:'C'})[new Date(iso+'T12:00:00').getDay()]||'A'}
+function openGroup(id){
+ const g=state.groups.find(x=>x.id===id);if(!g)return;
+ groupId=id;groupOpen=true;programEditing=false;mode='overview';detail='';stretchOpen='';workoutDate=today();day=suggestedDay(workoutDate,g);applyCustom();selected=allEx[0]?.id||'';render();window.scrollTo(0,0)
+}
+function closeGroup(){groupOpen=false;programEditing=false;mode='overview';detail='';render();window.scrollTo(0,0)}
+function chooseDate(date){if(!validDate(date))return;workoutDate=date;day=suggestedDay(date);mode='overview';detail='';stretchOpen='';render()}
+function shiftWeek(n){chooseDate(dateShift(workoutDate,n*7))}
+function chooseDay(k){
+ if(!WORKOUT_DAYS.includes(k))return;
+ day=k;mode='overview';detail='';stretchOpen='';
+ if(!programEditing){activeGroup().schedule[workoutDate]=k;save()}
+ render();
+}
+function planDate(date,k){if(!validDate(date)||!WORKOUT_DAYS.includes(k))return;workoutDate=date;day=k;mode='overview';detail='';stretchOpen='';render()}
+function dateLabel(iso){return iso.slice(8,10)+'.'+iso.slice(5,7)}
+function calendarHTML(){
+ const g=activeGroup(),start=weekStart(workoutDate),end=dateShift(start,6),labels=['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
+ return `<section class="group-calendar" aria-label="Календарь тренировок"><div class="row between calendar-heading"><button aria-label="Предыдущая неделя" onclick="shiftWeek(-1)">‹</button><div><strong>${dateLabel(start)} – ${dateLabel(end)}</strong><small>${start.slice(0,4)===end.slice(0,4)?start.slice(0,4):start.slice(0,4)+' / '+end.slice(0,4)}</small></div><button aria-label="Следующая неделя" onclick="shiftWeek(1)">›</button></div><div class="calendar-week">${labels.map((label,i)=>{
+  const iso=dateShift(start,i),done=state.history.filter(s=>sessionGroup(s)===g.id&&s.date===iso).map(s=>s.day),open=groupDrafts(g.id).filter(d=>d.date===iso&&workoutStarted(d)).map(d=>d.day),planned=WORKOUT_DAYS.includes(g.schedule[iso])?g.schedule[iso]:null,marks=[...new Set([...done,...open,...(planned?[planned]:[])])],selectedDate=iso===workoutDate,status=done.length?'completed':open.length?'draft':planned?'planned':'';
+  return `<button class="calendar-day ${selectedDate?'chosen':''} ${status}" aria-pressed="${selectedDate}" aria-label="${iso}${marks.length?' · '+marks.join(', '):''}" onclick="chooseDate('${iso}')"><small>${label}</small><strong>${iso.slice(8,10)}</strong><span class="calendar-dot" aria-hidden="true"></span><b>${marks.join(' · ')||'—'}</b></button>`;
+ }).join('')}</div><div class="row between calendar-caption"><small>${fmt(workoutDate)} · ${workoutDate===today()?'Сегодня':'Выбранная дата'}</small>${workoutDate!==today()?'<button class="linklike" onclick="chooseDate(today())">Сегодня</button>':''}</div></section>`;
+}
+function uniqueId(prefix){return prefix+Date.now().toString(36)+Math.random().toString(36).slice(2,10)}
+function emptyProgram(){return Object.fromEntries(WORKOUT_DAYS.map(k=>[k,{day:k,focus:'',ex:[],cool:[]}]))}
+function copiedProgram(g){
+ const p=programFor(g);return Object.fromEntries(WORKOUT_DAYS.map(k=>[k,{...p[k],ex:p[k].ex.map(e=>({...e,id:uniqueId(k),visualId:e.visualId||e.id})),cool:p[k].cool.map(x=>[...x])}]));
+}
+function validGroupName(name,exclude=''){const n=String(name||'').trim();if(!n||n.length>80){alert('Введи название группы (до 80 символов).');return ''}if(state.groups.some(g=>g.id!==exclude&&g.name.toLowerCase()===n.toLowerCase())){alert('Группа с таким названием уже существует.');return ''}return n}
+function addGroup(name,copyId=''){
+ name=validGroupName(name);if(!name)return false;
+ const source=state.groups.find(g=>g.id===copyId),g={id:uniqueId('g-'),name,program:source?copiedProgram(source):emptyProgram(),schedule:{},plans:{},custom:{}};
+ state.groups.push(g);save();openGroup(g.id);if(!source){day='A';editGroupProgram()}return true;
+}
+function renameGroup(name){
+ const g=activeGroup(),n=validGroupName(name,g.id);if(!n)return false;g.name=n;save();render();return true
+}
+function showGroupDialog(id){document.getElementById(id)?.showModal()}
+function newGroupFromForm(){addGroup(document.getElementById('newGroupName').value,document.getElementById('newGroupTemplate').value)}
+function renameGroupFromForm(){renameGroup(document.getElementById('renameGroupName').value)}
+function groupChooser(){
+ return `<div class="eyebrow">ТВОИ ПРОГРАММЫ · V1.7</div><div class="row between group-list-heading"><h2>Группы тренировок</h2></div><div class="group-cards">${state.groups.map(g=>{const p=programFor(g),n=WORKOUT_DAYS.reduce((n,k)=>n+p[k].ex.length,0),draftCount=groupDrafts(g.id).filter(workoutStarted).length;return `<button class="group-card" onclick="openGroup('${g.id}')"><span class="group-card-icon" aria-hidden="true">▤</span><span class="group-card-text"><strong>${esc(g.name)}</strong><small>A · B · C &nbsp; · &nbsp; ${n} упр.${draftCount?' · '+draftCount+' черн.':''}</small></span><b aria-hidden="true">›</b></button>`}).join('')}</div><button class="primary wide" onclick="showGroupDialog('newGroupDialog')">＋ Создать группу</button><dialog class="workout-menu" id="newGroupDialog" aria-labelledby="newGroupTitle"><div class="stack"><div class="row between"><h3 id="newGroupTitle">Новая группа</h3><button class="menu-close" aria-label="Закрыть" onclick="this.closest('dialog').close()">×</button></div><label class="field"><small>Название группы</small><input id="newGroupName" maxlength="80" placeholder="Например, Силовая"></label><label class="field"><small>Программа</small><select id="newGroupTemplate"><option value="">Создать с нуля</option>${state.groups.map(g=>`<option value="${g.id}">Копировать: ${esc(g.name)}</option>`).join('')}</select></label><button class="primary wide" onclick="newGroupFromForm()">Создать</button></div></dialog>`;
+}
+function groupTopHTML(){return `<div class="row between group-top"><button class="round" aria-label="К группам" onclick="closeGroup()">←</button><h2>${esc(activeGroup().name)}</h2><button class="group-settings" aria-label="Настройки группы" onclick="showGroupDialog('groupSettingsDialog')">⚙</button></div><dialog id="groupSettingsDialog" class="workout-menu" aria-labelledby="groupSettingsTitle"><div class="stack"><div class="row between"><h3 id="groupSettingsTitle">Настройки группы</h3><button class="menu-close" aria-label="Закрыть" onclick="this.closest('dialog').close()">×</button></div><label class="field"><small>Название группы</small><input id="renameGroupName" maxlength="80" value="${esc(activeGroup().name)}"></label><button class="primary wide" onclick="renameGroupFromForm()">Сохранить название</button><button class="wide" onclick="editGroupProgram()">Редактировать комплексы A / B / C</button></div></dialog>`}
+function complexTabs(){return `<div class="complex-tabs" aria-label="Выбор комплекса">${WORKOUT_DAYS.map(k=>`<button class="${k===day?'current':''}" aria-pressed="${k===day}" onclick="chooseDay('${k}')">${k}</button>`).join('')}</div>`}
+function draftLinksHTML(){
+ const drafts=groupDrafts().filter(d=>workoutStarted(d)&&(d.date!==workoutDate||d.day!==day)).sort((a,b)=>b.date.localeCompare(a.date));
+ return drafts.length?`<details class="group-drafts"><summary>Незавершённые тренировки · ${drafts.length}</summary>${drafts.map(d=>`<button class="exercise-list-item" onclick="planDate('${d.date}','${d.day}')"><span>${fmt(d.date)} · ${d.day}</span><b>›</b></button>`).join('')}</details>`:'';
+}
+function editGroupProgram(){programEditing=true;mode='overview';detail='';render();window.scrollTo(0,0)}
+function closeGroupEditor(){programEditing=false;render();window.scrollTo(0,0)}
+function ensureGroupProgram(){const g=activeGroup();g.program??=JSON.parse(JSON.stringify(groupBase(g)));return g.program}
+function hasDraftForDay(){return groupDrafts().some(d=>d.day===day&&workoutStarted(d))}
+function clearEmptyDrafts(){for(const [key,d] of Object.entries(state.groupDrafts)){if(sessionGroup(d)===groupId&&d.day===day&&!workoutStarted(d))delete state.groupDrafts[key]}}
+function appendGroupExercise(source,n,reps,rest){
+ if(hasDraftForDay()){alert('Сначала заверши или отмени начатые тренировки этого комплекса.');return false}
+ const x=LIB.find(e=>e.id===source);n=Number(n);rest=Number(rest);reps=String(reps||'').trim();
+ if(!x||!Number.isInteger(n)||n<1||n>12||!reps||reps.length>40||!Number.isInteger(rest)||rest<1||rest>600){alert('Выбери упражнение и проверь подходы, повторы и отдых.');return false}
+ const p=ensureGroupProgram()[day],info=infoFor(x);
+ p.ex.push({id:uniqueId(day),visualId:x.visualId||x.id,name:x.name,unit:x.unit||'повт.',weight:!!x.weight,sets:n,plan:n+' × '+reps,rest,restLabel:rest+' с',muscles:info.muscles,tip:info.tip});
+ clearEmptyDrafts();applyCustom();save();render();return true;
+}
+function addGroupExerciseFromForm(){appendGroupExercise(document.getElementById('groupAddSource').value,document.getElementById('groupAddSets').value,document.getElementById('groupAddReps').value,document.getElementById('groupAddRest').value)}
+function removeGroupExercise(id){
+ if(hasDraftForDay()){alert('Сначала заверши или отмени начатые тренировки этого комплекса.');return}
+ if(!PROGRAM[day].ex.some(e=>e.id===id)||!confirm('Убрать упражнение из этого комплекса? Прошлая история останется.'))return;
+ const p=ensureGroupProgram()[day];p.ex=p.ex.filter(x=>x.id!==id);delete customFor()[id];delete plansFor()[id];clearEmptyDrafts();applyCustom();save();render()
+}
+function groupExerciseOptions(q='',v=''){return LIB.filter(e=>e.id===v||[e.name,e.muscles,e.category,e.equipment].join(' ').toLowerCase().includes(q.toLowerCase())).map(e=>`<option value="${esc(e.id)}" ${e.id===v?'selected':''}>${esc(e.name)}</option>`).join('')}
+function filterGroupExercises(input){const el=document.getElementById('groupAddSource');el.innerHTML=groupExerciseOptions(input.value,el.value)}
+function groupExerciseDefaults(){const x=LIB.find(e=>e.id===document.getElementById('groupAddSource').value);if(!x)return;document.getElementById('groupAddSets').value=x.sets||3;document.getElementById('groupAddReps').value=x.plan?.split('×')[1]?.trim()||(x.unit==='сек'?'30':'10–12');document.getElementById('groupAddRest').value=x.rest||60}
+function groupEditorHTML(){
+ const p=PROGRAM[day],locked=hasDraftForDay(),first=LIB[0];
+ return `<button class="linklike" onclick="closeGroupEditor()">‹ ${esc(activeGroup().name)}</button><h2>Редактирование комплексов</h2>${complexTabs()}<div class="card stack"><h3>Комплекс ${day} · ${p.ex.length} упр.</h3>${locked?'<p class="notice">Для изменения списка сначала заверши или отмени начатые тренировки этого комплекса.</p>':''}${p.ex.length?p.ex.map(e=>`<div class="row between group-edit-item"><span><strong>${esc(e.name)}</strong><small>${esc(e.plan)}</small></span><button class="danger" aria-label="Убрать ${esc(e.name)}" onclick="removeGroupExercise('${e.id}')" ${locked?'disabled':''}>−</button></div>`).join(''):'<p class="muted">Пока нет упражнений.</p>'}</div>${locked?'':`<div class="card stack"><h3>Добавить упражнение</h3><input type="search" placeholder="Поиск по библиотеке" oninput="filterGroupExercises(this)"><label class="field"><small>Упражнение</small><select id="groupAddSource" onchange="groupExerciseDefaults()">${groupExerciseOptions()}</select></label><div class="group-entry-fields"><label class="field"><small>Подходы</small><input id="groupAddSets" type="number" min="1" max="12" value="${first?.sets||3}"></label><label class="field"><small>Повторы / сек</small><input id="groupAddReps" value="${esc(first?.plan?.split('×')[1]?.trim()||'10–12')}"></label><label class="field"><small>Отдых, сек</small><input id="groupAddRest" type="number" min="1" max="600" value="${first?.rest||60}"></label></div><button class="primary wide" onclick="addGroupExerciseFromForm()">＋ Добавить</button></div>`}<button class="wide" onclick="closeGroupEditor()">Готово</button>`;
+}
+
+normalizeGroups();applyCustom();
 if('serviceWorker'in navigator&&/^https?:$/.test(location.protocol)){navigator.serviceWorker.register('./sw.js').then(r=>r.update()).catch(()=>{});}initLibrary();

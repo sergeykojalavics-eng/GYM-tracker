@@ -20,8 +20,8 @@ function localVisual(key,fallback=''){return `<div class="local-visual" data-med
 function mediaTargets(){
  const targets=new Map();
  for(const e of LIB)targets.set(e.id,{key:e.id,name:e.name,group:BASE.some(x=>x.id===e.id)||EXTRA.some(x=>x.id===e.id)?'Встроенные упражнения':'Каталог'});
- for(const e of allEx){const key=e.visualId||e.id;if(!targets.has(key))targets.set(key,{key,name:e.name,group:'Встроенные упражнения'})}
- for(const x of [...Object.values(PROGRAM).flatMap(p=>p.cool),...Object.values(MOB).flat()]){
+ for(const e of allProgramExercises()){const key=e.visualId||e.id;if(!targets.has(key))targets.set(key,{key,name:e.name,group:'Встроенные упражнения'})}
+ for(const x of [...allProgramCool(),...Object.values(MOB).flat()]){
   const key='stretch:'+x[0];targets.set(key,{key,name:x[0],group:'Мобильность и заминка'});
  }
  return [...targets.values()];

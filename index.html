@@ -12,16 +12,11 @@
 .workout-position small{font-size:10px;letter-spacing:1.3px;color:var(--accent);font-weight:750}
 .workout-position strong{font-size:14px}
 .workout-end{background:#242426;border:1px solid var(--line);border-radius:22px;min-height:44px;padding:8px 12px;font-size:13px;white-space:nowrap}
-.workout-hero{display:grid;grid-template-columns:minmax(0,1fr) 92px;align-items:center;gap:12px;margin:5px 0 14px}
-.workout-hero .visual{width:100%;margin:0 auto;border-radius:19px;max-width:300px;background:var(--card)}
-.workout-hero .oei-frames img{max-height:215px;width:100%;object-fit:contain}
-.workout-hero .local-visual>img{max-height:215px;width:100%;object-fit:contain}
+.workout-hero{display:block;margin:5px 0 14px}
+.workout-hero .visual{width:100%;margin:0;border-radius:19px;max-width:none;background:var(--card)}
+.workout-hero .oei-frames img{max-height:none;width:100%;height:auto;object-fit:contain}
+.workout-hero .local-visual>img{max-height:none;max-width:none!important;width:100%;height:auto;object-fit:contain}
 .workout .oei-nav button{min-height:36px}
-.exercise-progress{display:grid;justify-items:center;gap:8px}
-.exercise-ring{width:92px;height:92px;display:grid;place-items:center;border-radius:50%;background:conic-gradient(var(--accent) var(--ring-progress,0%), #323236 0)}
-.exercise-ring>div{width:78px;height:78px;display:grid;align-content:center;justify-items:center;gap:0;background:var(--bg);border-radius:50%}
-.exercise-ring strong{font-size:23px;letter-spacing:-.8px;font-variant-numeric:tabular-nums;line-height:1.1}
-.exercise-ring small{font-size:11px}
 .workout .exercise-title{text-align:left;font-size:25px;line-height:1.18;letter-spacing:-.5px}
 .workout-muscles{text-align:left;margin:5px 0 14px}
 .workout-quick{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px;margin:12px 0 15px}
@@ -60,5 +55,51 @@
 .workout-menu h3{font-size:21px}
 .workout-menu .menu-close{font-size:23px;border-radius:50%;width:44px;height:44px;padding:0}
 .workout-menu button.wide{min-height:52px;border-radius:15px;line-height:1.25}
-@media(max-width:350px){.workout-hero{grid-template-columns:minmax(0,1fr) 76px;gap:8px}.exercise-ring{width:76px;height:76px}.exercise-ring>div{width:64px;height:64px}.exercise-ring strong{font-size:20px}.workout-end{padding:8px}.workout-quick button{font-size:10px}.workout-plan{padding:8px;gap:6px}.workout-plan label{max-width:88px}.rest-start{padding:6px}}
+@media(max-width:350px){.workout-end{padding:8px}.workout-quick button{font-size:10px}.workout-plan{padding:8px;gap:6px}.workout-plan label{max-width:88px}.rest-start{padding:6px}}
+
+/* V1.7: workout group chooser and weekly calendar. */
+.group-list-heading{margin:10px 0 15px}
+.group-cards{display:grid;gap:12px;margin:14px 0 20px}
+.group-card{display:flex;align-items:center;gap:14px;width:100%;border:1px solid var(--line);border-radius:20px;padding:16px;text-align:left;min-height:96px;background:var(--card)}
+.group-card-icon{width:48px;height:48px;flex:none;display:grid;place-items:center;font-size:24px;background:#25372b;border-radius:15px;color:var(--accent)}
+.group-card-text{display:grid;gap:4px;flex:1;min-width:0}
+.group-card-text strong{font-size:19px;overflow-wrap:anywhere}
+.group-card-text small{font-weight:400}
+.group-card>b{font-size:24px;color:var(--muted)}
+.group-top{gap:9px;margin:3px 0 19px}
+.group-top h2{font-size:21px;line-height:1.2;text-align:center;overflow-wrap:anywhere;flex:1;min-width:0}
+.group-top .round,.group-settings{width:46px;min-width:46px;height:46px;min-height:46px;padding:0;display:grid;place-items:center;border:1px solid var(--line);background:var(--card);border-radius:50%;font-size:22px}
+.group-calendar{border:1px solid var(--line);border-radius:19px;padding:12px 8px 7px;background:var(--card)}
+.calendar-heading{padding:0 3px 9px}
+.calendar-heading>div{display:flex;align-items:baseline;gap:7px;justify-content:center;flex-wrap:wrap;text-align:center}
+.calendar-heading button{background:transparent;border:1px solid var(--line);border-radius:12px;padding:3px 10px;min-height:40px;font-size:23px}
+.calendar-week{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:3px}
+.calendar-day{display:grid;justify-items:center;align-content:center;gap:4px;min-width:0;min-height:94px;padding:7px 1px;font-weight:600;background:transparent;border:1px solid transparent;border-radius:15px;color:var(--text)}
+.calendar-day.chosen{background:#2b3330;border-color:#79dfb4}
+.calendar-day small{line-height:1;color:var(--muted);font-size:11px}
+.calendar-day strong{font-size:16px;line-height:1.2}
+.calendar-day b{font-size:11px;line-height:1.2;white-space:normal;text-align:center;overflow-wrap:anywhere;min-height:13px;color:var(--muted)}
+.calendar-dot{border-radius:50%;width:8px;height:8px;background:#444448}
+.calendar-day.planned .calendar-dot{background:#8e9ff1}
+.calendar-day.draft .calendar-dot{background:#f0bb59}
+.calendar-day.completed .calendar-dot{background:#79dfb4}
+.calendar-day.planned b,.calendar-day.draft b,.calendar-day.completed b{color:var(--text)}
+.calendar-caption{padding:4px 7px 0;min-height:33px}
+.calendar-caption .linklike{font-size:12px;min-height:32px}
+.complex-tabs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:5px;margin:15px 0 20px}
+.complex-tabs button{background:transparent;border:1px solid transparent;border-radius:11px;font-size:18px;min-height:45px;color:var(--muted)}
+.complex-tabs button.current{background:#26382f;border-color:#79dfb4;color:var(--accent)}
+.group-complex-heading{margin:5px 0}
+.group-complex-heading h3{font-size:20px}
+.group-session{padding:12px;margin:14px 0}
+.group-start{min-height:50px}
+.group-drafts{margin:12px 0;padding:0 10px;border:1px solid var(--line);border-radius:12px}
+.group-drafts .exercise-list-item{justify-content:space-between}
+.group-entry-fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+.group-entry-fields small{font-size:11px}
+.group-entry-fields input{padding:9px 5px;text-align:center}
+.group-edit-item{padding:10px 0;border-bottom:1px solid var(--line)}
+.group-edit-item>span{display:grid;gap:3px;min-width:0;overflow-wrap:anywhere}
+.group-edit-item button{min-width:44px;flex:none}
+@media(max-width:350px){.calendar-week{gap:1px}.calendar-day{border-radius:12px}.calendar-day b{font-size:10px}.group-top h2{font-size:18px}}
 </style></head><body><header><div><div class="eyebrow">Strength · Mobility</div><h1>Gym Tracker</h1></div><button id="settings" aria-label="Настройки" onclick="navigate('settings')">⚙</button></header><div id="storageWarning" role="alert"></div><main id="main"></main><nav class="nav" aria-label="Навигация"><button data-tab="train" onclick="navigate('train')"><b>▤</b>Тренировка</button><button data-tab="mob" onclick="navigate('mob')"><b>◉</b>Мобильность</button><button data-tab="library" onclick="navigate('library')"><b>▥</b>Библиотека</button><button data-tab="history" onclick="navigate('history')"><b>◷</b>История</button><button data-tab="progress" onclick="navigate('progress')"><b>↗</b>Прогресс</button></nav><script src="data.js"></script><script src="visuals.js"></script><script src="illustrations.js"></script><script src="library.js"></script><script src="app.js"></script></body></html>
