@@ -1,4 +1,4 @@
-const CACHE='gym-tracker-v1.5.0';const ASSETS=['./','./index.html','./data.js','./app.js','./library.js','./illustrations.js','./visuals.js','./DATASET-LICENSE.txt','./ILLUSTRATIONS-LICENSE.txt','./manifest.webmanifest','./icon-192.png','./icon-512.png'];
+const CACHE='gym-tracker-v1.6.0';const ASSETS=['./','./index.html','./data.js','./app.js','./library.js','./illustrations.js','./visuals.js','./DATASET-LICENSE.txt','./ILLUSTRATIONS-LICENSE.txt','./manifest.webmanifest','./icon-192.png','./icon-512.png'];
 self.addEventListener('install',e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(ASSETS)).then(()=>self.skipWaiting())));
 self.addEventListener('activate',e=>e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k.startsWith('gym-tracker-')&&k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));
 self.addEventListener('fetch',e=>{if(e.request.cache==='no-store'||e.request.method!=='GET'||new URL(e.request.url).origin!==self.location.origin)return;e.respondWith(caches.open(CACHE).then(c=>c.match(e.request).then(r=>r||fetch(e.request).catch(()=>e.request.mode==='navigate'?c.match('./index.html'):Response.error()))))});
